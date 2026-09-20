@@ -4,7 +4,7 @@
 
 ## 1. 概要
 
-本拡張機能は、ブラウザ上の生成AIチャット（ChatGPT、Claude、Gemini、Copilot等）への送信直前に入力テキストを端末内で検査し、健康保険の被保険者番号などの個人情報を検出したら送信をブロックする。検査・判定・ログはすべて端末内で完結し、拡張機能自身は一切の外部通信を行わない。
+本拡張機能は、ブラウザ上の生成AIチャット（ChatGPT、Claude、Gemini、Copilot等）への送信直前に入力テキストを端末内で検査し、健康保険の被保険者番号などの個人情報を検出したら送信をいったん止め、確認ポップアップで利用者に知らせる。検査・判定・ログはすべて端末内で完結し、拡張機能自身は一切の外部通信を行わない。
 
 ### 1.1 目的
 
@@ -26,7 +26,7 @@
 1. **完全スタンドアロン**：`fetch`・`XMLHttpRequest`・`WebSocket`・`sendBeacon` を拡張機能コードで使用しない。検出ルールは拡張機能に同梱する。
 2. **検出値を保存しない**：ログには種別・件数・時刻・サイトのみを残し、検出した番号そのものは保存しない。
 3. **ガードレールであり完全なDLPではない**：意図的な回避（画像化、分割入力、別ブラウザ）は防げない前提で、組織の運用ルール・ブラウザポリシーと組み合わせる。
-4. **誤検知より見逃しを重く見る**：健康保険関連番号はブロック、判定の曖昧なものは警告（送信確認）とする2段階制。
+4. **止めるのではなく気づかせる**：ルールベースの検出では誤検知を避けられないため、既定の判定はすべて警告とする。検出時は送信をいったん止めて確認ポップアップを表示し、利用者が承認したときのみ送信する。ブロック（送信不可）は、管理者ポリシーで種別ごとに有効化した場合にのみ適用する。
 
 ## 2. 要件定義
 
@@ -39,7 +39,7 @@
 | F-03 | 貼り付け（paste）・ドロップ（drop）時点で検査し、検出時は貼り付けを止めて警告する | 必須 |
 | F-04 | 検出時にモーダルで「検出種別」「マスク済みの該当箇所」「対処方法」を表示する | 必須 |
 | F-05 | 「該当箇所をマスクして入力欄に戻す」操作を提供する | 必須 |
-| F-06 | 判定レベルを「ブロック（送信不可）」「警告（確認後送信可）」の2段階で持つ | 必須 |
+| F-06 | 検出時は送信をいったん止めて確認ポップアップを表示し、承認時のみ送信する。既定はすべて警告とし、ブロック（送信不可）は管理者ポリシーで有効化した種別にのみ適用する | 必須 |
 | F-07 | 入力中にリアルタイムで検出状況を入力欄付近にバッジ表示する | 推奨 |
 | F-08 | 検出ルールのON/OFF、カスタム正規表現、キーワード辞書を設定画面で編集できる | 推奨 |
 | F-09 | 管理者がポリシー（managed storage）で設定を固定し、利用者が変更できないようにする | 必須（組織配布時） |
@@ -55,7 +55,7 @@
 | 性能 | 1万文字の入力に対し検査を50ms以内で完了する。入力中の検査は300msのデバウンスをかける |
 | 権限 | 対象AIドメインのみを `host_permissions` / `matches` に指定し、`<all_urls>` は使わない |
 | 保守性 | サイトごとのDOMセレクタを設定ファイルに分離し、サイト側の画面改修に設定変更だけで追従できる |
-| 可用性 | 拡張機能の例外発生時は「安全側」に倒し、送信をブロックしてエラーを表示する（fail-closed） |
+| 可用性 | 拡張機能の例外発生時は「安全側」に倒し、送信をいったん止めてエラーを表示する（fail-closed）。利用者は内容を確認のうえ続行できる |
 | 多言語 | UIは日本語。全角数字・全角ハイフン・空白混在の入力を正規化して検出する |
 
 ### 2.3 対象サイト（初期値）
@@ -82,19 +82,21 @@ Google Chrome および Microsoft Edge の現行安定版（Manifest V3）。い
 
 | 種別 | 形式 | 検証方法 | 既定の判定 |
 | --- | --- | --- | --- |
-| 保険者番号 | 8桁（法別2＋都道府県2＋保険者別3＋検証1）、国保は6桁 | 検証番号（3.3） | ブロック |
-| 被保険者記号・番号 | 記号・番号とも保険者ごとに可変長（英数字・記号混在）、枝番2桁 | チェックディジットなし。キーワード必須 | ブロック |
-| 後期高齢者医療 被保険者番号 | 8桁 | キーワード＋桁数（検証方式は要確認） | ブロック |
-| 公費負担者番号／受給者番号 | 8桁／7桁 | 検証番号（要確認）＋キーワード | ブロック |
-| マイナンバー（個人番号） | 12桁 | 検査用数字（3.4） | ブロック |
-| 基礎年金番号 | 4桁-6桁（計10桁） | キーワード必須 | ブロック |
-| 運転免許証番号 | 12桁 | キーワード＋桁数 | 警告 |
-| パスポート番号 | 英字2桁＋数字7桁 | キーワード＋形式 | 警告 |
-| クレジットカード番号 | 14〜16桁 | Luhn | ブロック |
-| 電話番号 | 0から始まる10〜11桁 | 形式 | 警告 |
-| メールアドレス | RFC簡易形式 | 形式 | 警告 |
-| 生年月日＋氏名らしき語 | 和暦・西暦の日付＋キーワード | 組み合わせ | 警告 |
-| 病名・診療情報（要配慮） | 辞書（「診断」「病名」「処方」等） | 番号と同時出現で加点 | 警告 |
+| 保険者番号 | 8桁（法別2＋都道府県2＋保険者別3＋検証1）、国保は6桁 | 検証番号（3.3） | 警告（強調） |
+| 被保険者記号・番号 | 記号・番号とも保険者ごとに可変長（英数字・記号混在）、枝番2桁 | チェックディジットなし。キーワード必須 | 警告（強調） |
+| 後期高齢者医療 被保険者番号 | 8桁 | キーワード＋桁数（検証方式は要確認） | 警告（強調） |
+| 公費負担者番号／受給者番号 | 8桁／7桁 | 検証番号（要確認）＋キーワード | 警告（強調） |
+| マイナンバー（個人番号） | 12桁 | 検査用数字（3.4） | 警告（強調） |
+| 基礎年金番号 | 4桁-6桁（計10桁） | キーワード必須 | 警告（強調） |
+| 運転免許証番号 | 12桁 | キーワード＋桁数 | 警告（参考） |
+| パスポート番号 | 英字2桁＋数字7桁 | キーワード＋形式 | 警告（参考） |
+| クレジットカード番号 | 14〜16桁 | Luhn | 警告（強調） |
+| 電話番号 | 0から始まる10〜11桁 | 形式 | 警告（参考） |
+| メールアドレス | RFC簡易形式 | 形式 | 警告（参考） |
+| 生年月日＋氏名らしき語 | 和暦・西暦の日付＋キーワード | 組み合わせ | 警告（参考） |
+| 病名・診療情報（要配慮） | 辞書（「診断」「病名」「処方」等） | 番号と同時出現で加点 | 警告（参考） |
+
+既定の判定はすべて警告であり、送信は確認ポップアップでいったん止まるが、利用者の承認で送信できる。「強調」と「参考」は表示上の重要度の差であり、送信可否は変わらない。管理者ポリシーで種別を指定した場合のみ、その種別の「強調」がブロック（送信不可）になる。
 
 「要確認」の項目は、実装前に厚生労働省・各保険者の公式な番号設定資料で桁構成と検証方式を確認すること。確認できるまではキーワード必須の判定に留め、チェックディジットでの絞り込みは行わない。
 
@@ -135,11 +137,11 @@ R = \left(\sum_{n=1}^{11} P_n Q_n\right) \bmod 11,\quad \text{check} = \begin{ca
 | 弱キーワード（番号、No、患者、受診、カルテ、氏名、生年月日） | +15 |
 | 否定キーワード（注文番号、型番、請求書番号、郵便番号、ISBN） | −40 |
 
-**判定**：70点以上はその種別の既定判定（ブロック／警告）、40〜69点は警告、39点以下は通過。閾値とキーワードは設定ファイルで調整可能にし、7章の評価データで決定する。
+**判定**：70点以上は警告（強調表示）、40〜69点は警告（参考表示）、39点以下は通過。いずれも送信は確認ポップアップでいったん止まり、利用者の承認で送信できる。管理者ポリシーで当該種別をブロックに指定した場合のみ、70点以上が送信不可になる。閾値とキーワードは設定ファイルで調整可能にし、7章の評価データで決定する。
 
 ### 3.6 ルール定義フォーマット
 
-ルールは拡張機能に同梱するJSONで定義し、管理者は managed storage で追加・上書きできる。
+ルールは拡張機能に同梱するJSONで定義し、管理者は managed storage で追加・上書きできる。同梱ルールの `action` は例外なく `warn` とし、`block` は管理者ポリシーでの上書きにのみ使う。
 
 ```json
 {
@@ -148,7 +150,7 @@ R = \left(\sum_{n=1}^{11} P_n Q_n\right) \bmod 11,\quad \text{check} = \begin{ca
   "pattern": "(?<![0-9])(?:[0-9]{8}|[0-9]{6})(?![0-9])",
   "validator": "insurerCheckDigit",
   "keywords": { "strong": ["保険者番号", "保険証"], "weak": ["番号"], "negative": ["注文番号", "郵便番号"] },
-  "action": "block",
+  "action": "warn",
   "enabled": true
 }
 ```
@@ -167,7 +169,7 @@ flowchart TD
     MS[managed storage<br/>管理者ポリシー] --> CFG[設定マネージャ]
     LS[storage.local<br/>利用者設定] --> CFG
     CFG --> DE
-    DE -->|検出あり| UI[ブロックモーダル<br/>Shadow DOM]
+    DE -->|検出あり| UI[確認ポップアップ<br/>Shadow DOM]
     DE -->|検出なし| SEND[サイト本来の送信処理]
     NG[通信ラッパ<br/>MAIN world 任意] --> SEND
     CS --> SW[Service Worker<br/>件数ログ・バッジ]
@@ -182,12 +184,12 @@ flowchart TD
 | コンテンツスクリプト `content.js` | 対象ページ（ISOLATED world）、`document_start` | 入力欄の特定、イベント捕捉、送信の中止、UI表示 |
 | 検出エンジン `detector.js` | コンテンツスクリプト内（同一ファイルに同梱） | 正規化、正規表現照合、チェックディジット、スコアリング |
 | サイトアダプタ `sites.json` | 同梱設定 | サービスごとの入力欄・送信ボタンのセレクタ |
-| ブロックUI `modal.js` | Shadow DOM（closed） | 検出内容の表示、マスク操作、ページCSSからの隔離 |
+| 確認ポップアップ `modal.js` | Shadow DOM（closed） | 検出内容の表示、マスク操作、送信の承認、ページCSSからの隔離 |
 | Service Worker `background.js` | 拡張機能 | 検出件数の記録、ツールバーバッジ、設定変更の配信 |
 | 設定画面 `options.html` | 拡張機能ページ | ルールのON/OFF、カスタムルール、件数表示 |
 | 通信ラッパ `net-guard.js` | 対象ページ（MAIN world）、任意 | `fetch` / `XMLHttpRequest.send` / `WebSocket.send` の本文検査 |
 
-### 4.3 送信ブロックのシーケンス
+### 4.3 送信時の確認シーケンス
 
 ```mermaid
 sequenceDiagram
@@ -200,13 +202,14 @@ sequenceDiagram
     Page->>CS: keydown / click (capture)
     CS->>DE: 入力欄テキストを検査
     DE-->>CS: 検出結果（種別・位置・スコア）
-    alt ブロック判定
+    alt 検出あり（既定：警告）
         CS->>Page: preventDefault + stopImmediatePropagation
-        CS->>User: モーダル表示（マスク／編集に戻る）
-    else 警告判定
-        CS->>User: 確認ダイアログ
-        User->>CS: 送信する
-        CS->>Page: 送信操作を再発火（検査済みフラグ付き）
+        CS->>User: 確認ポップアップ（マスクする／編集に戻る／このまま送信する）
+        User->>CS: このまま送信する
+        CS->>Page: 送信操作を再発火（同一テキスト・10秒以内のみ）
+    else 検出あり（ポリシーでブロック指定の種別）
+        CS->>Page: preventDefault + stopImmediatePropagation
+        CS->>User: 確認ポップアップ（マスクする／編集に戻る）
     else 検出なし
         CS->>Page: そのまま通過
     end
@@ -244,7 +247,7 @@ pii-guard/
 │   ├── rules.js           # 検出ルール定義（JSONではなくJSとして同梱）
 │   ├── detector.js        # 検出エンジン
 │   ├── sites.js           # サイト別セレクタ
-│   ├── modal.js           # ブロックUI（Shadow DOM）
+│   ├── modal.js           # 確認ポップアップ（Shadow DOM）
 │   ├── content.js         # イベント捕捉・送信制御
 │   ├── net-guard.js       # 任意：通信ラッパ（MAIN world）
 │   └── background.js      # Service Worker：件数記録・設定配信
@@ -264,7 +267,7 @@ pii-guard/
   "manifest_version": 3,
   "name": "AI入力 個人情報ガード",
   "version": "1.0.0",
-  "description": "生成AIチャットへの個人情報の送信を端末内で検出・ブロックします（外部通信なし）",
+  "description": "生成AIチャットへの個人情報の送信を端末内で検出し、送信前に確認します（外部通信なし）",
   "minimum_chrome_version": "111",
   "permissions": ["storage", "scripting"],
   "host_permissions": [
@@ -308,36 +311,37 @@ pii-guard/
 ```js
 // src/rules.js — 同梱ルール。管理者ポリシーで無効化・追加が可能
 globalThis.PII_RULES = [
+  // 同梱ルールの action は例外なくすべて 'warn'。'block' は管理者ポリシーでの上書き専用
   {
     id: 'insurer_number', label: '保険者番号', kind: 'numeric',
-    lengths: [6, 8], validator: 'luhn', action: 'block',
-    // 6・8桁の数字は10%の確率で偶然検証を通るため、キーワードがなければ警告に留める
-    requireKeywordForBlock: true,
+    lengths: [6, 8], validator: 'luhn', action: 'warn',
+    // 6・8桁の数字は10%の確率で偶然検証を通るため、キーワードがなければ「参考」に留める
+    requireKeywordForHigh: true,
     keywords: { strong: ['保険者番号', '保険証', '保険者'], weak: ['番号', 'No'], negative: ['注文番号', '郵便番号', '型番', '請求書'] }
   },
   {
     id: 'insured_symbol_number', label: '被保険者記号・番号', kind: 'regex',
     pattern: '(?:記号)\\s*[:：]?\\s*[0-9A-Za-z\\-]{1,10}\\s*[・,、 ]?\\s*(?:番号)\\s*[:：]?\\s*[0-9]{1,10}',
-    baseScore: 70, action: 'block'
+    baseScore: 70, action: 'warn'
   },
   {
     id: 'insured_number_kw', label: '被保険者番号', kind: 'regex',
     pattern: '(?:被保険者番号|被保番号|保険証番号)\\s*[:：]?\\s*[0-9A-Za-z\\-]{4,12}',
-    baseScore: 70, action: 'block'
+    baseScore: 70, action: 'warn'
   },
   {
     id: 'my_number', label: 'マイナンバー', kind: 'numeric',
-    lengths: [12], validator: 'myNumber', action: 'block',
+    lengths: [12], validator: 'myNumber', action: 'warn',
     keywords: { strong: ['マイナンバー', '個人番号'], weak: ['番号'], negative: [] }
   },
   {
     id: 'pension_number', label: '基礎年金番号', kind: 'numeric',
-    lengths: [10], validator: null, action: 'block', requireKeyword: true,
+    lengths: [10], validator: null, action: 'warn', requireKeyword: true,
     keywords: { strong: ['基礎年金番号', '年金番号', '年金手帳'], weak: [], negative: [] }
   },
   {
     id: 'credit_card', label: 'クレジットカード番号', kind: 'numeric',
-    lengths: [14, 15, 16], validator: 'luhn', action: 'block',
+    lengths: [14, 15, 16], validator: 'luhn', action: 'warn',
     keywords: { strong: ['カード番号', 'クレジット'], weak: [], negative: [] }
   },
   {
@@ -413,14 +417,15 @@ globalThis.Detector = (() => {
   // 区切り（空白・ハイフン・ドット）を挟んだ数字列を候補として抽出
   const NUMERIC_RUN = /(?<![0-9])[0-9](?:[ \-.]?[0-9]){3,18}(?![0-9])/g;
 
-  function detect(src, { rules = globalThis.PII_RULES, thresholds = { block: 70, warn: 40 } } = {}) {
+  function detect(src, { rules = globalThis.PII_RULES, thresholds = { high: 70, low: 40 } } = {}) {
     const { text, map } = normalizeWithMap(src);
     const findings = [];
 
     const push = (rule, start, end, score) => {
+      // 既定は rule.action === 'warn'。'block' は管理者ポリシーで指定された種別のみ
       let level = 'pass';
-      if (score >= thresholds.block) level = rule.action;   // 'block' or 'warn'
-      else if (score >= thresholds.warn) level = 'warn';
+      if (score >= thresholds.high) level = rule.action;    // 'warn'（既定）または 'block'
+      else if (score >= thresholds.low) level = 'notice';   // 参考表示の警告
       if (level === 'pass') return;
       findings.push({ ruleId: rule.id, label: rule.label, level, score,
                       start: map[start], end: map[end] });  // 元テキスト上の位置
@@ -440,7 +445,7 @@ globalThis.Detector = (() => {
         const kw = keywordScore(text, start, end, rule.keywords);
         if (rule.requireKeyword && !kw.strong) continue;
         score += kw.score;
-        if (rule.requireKeywordForBlock && !kw.strong) score = Math.min(score, thresholds.block - 1);
+        if (rule.requireKeywordForHigh && !kw.strong) score = Math.min(score, thresholds.high - 1);
         push(rule, start, end, score);
       }
     }
@@ -458,7 +463,7 @@ globalThis.Detector = (() => {
 
   // 同じ範囲に複数ルールが当たった場合は、level が強くスコアの高いものを残す
   function dedupe(fs) {
-    const rank = { block: 2, warn: 1 };
+    const rank = { block: 3, warn: 2, notice: 1 };
     fs.sort((a, b) => a.start - b.start || rank[b.level] - rank[a.level] || b.score - a.score);
     const out = [];
     for (const f of fs) {
@@ -510,8 +515,8 @@ globalThis.PII_GENERIC = {
 // src/content.js
 (() => {
   const site = globalThis.PII_SITES[location.hostname] || globalThis.PII_GENERIC;
-  let settings = { thresholds: { block: 70, warn: 40 }, rules: globalThis.PII_RULES, blockFiles: true };
-  let approved = null;  // 警告を利用者が承認した { text, until }
+  let settings = { thresholds: { high: 70, low: 40 }, rules: globalThis.PII_RULES, blockFiles: true };
+  let approved = null;  // 利用者が確認ポップアップで承認した { text, until }
 
   // 設定の読込：管理者ポリシー（managed）を利用者設定（local）より優先
   Promise.all([
@@ -532,13 +537,15 @@ globalThis.PII_GENERIC = {
     try {
       findings = globalThis.Detector.detect(text, settings);
     } catch (err) {
-      stop(e);  // fail-closed：検査できなければ送信させない
-      globalThis.PiiModal.showError();
+      stop(e);  // fail-closed：検査できなければ、まず止める
+      // 業務を止めないため、利用者は内容を確認のうえ続行できる
+      globalThis.PiiModal.showError({ onProceed: () => { approved = { text, until: Date.now() + 10_000 }; } });
       return;
     }
     if (!findings.length) return;
     stop(e);
     report(findings);
+    // 既定では block レベルは発生しないため canProceed は true。ポリシー指定時のみ false
     const blocked = findings.some((f) => f.level === 'block');
     globalThis.PiiModal.show({
       mode, findings, text, canProceed: !blocked,
@@ -574,8 +581,9 @@ globalThis.PII_GENERIC = {
     stop(e);
     report(findings);
     globalThis.PiiModal.show({
-      mode: 'paste', findings, text, canProceed: false,
-      onMask: () => insertAtCursor(el, globalThis.Detector.mask(text, findings))
+      mode: 'paste', findings, text, canProceed: !findings.some((f) => f.level === 'block'),
+      onMask: () => insertAtCursor(el, globalThis.Detector.mask(text, findings)),
+      onProceed: () => insertAtCursor(el, text)   // 「このまま貼り付ける」
     });
   }
   window.addEventListener('paste', (e) => onIncoming(e, e.clipboardData), true);
@@ -604,7 +612,7 @@ globalThis.PII_GENERIC = {
     chrome.runtime.sendMessage({
       type: 'detected', site: location.hostname,
       kinds: [...new Set(findings.map((f) => f.ruleId))],
-      level: findings.some((f) => f.level === 'block') ? 'block' : 'warn'
+      level: ['block', 'warn', 'notice'].find((lv) => findings.some((f) => f.level === lv))
     }).catch(() => {});
   }
 
@@ -612,11 +620,14 @@ globalThis.PII_GENERIC = {
     const locked = managed.lockSettings === true;
     const src = locked ? managed : { ...local, ...managed };
     const disabled = new Set(src.disabledRules || []);
+    const toBlock = new Set(src.blockRules || []);   // 既定は空＝すべて警告
     return {
       ...base,
       thresholds: src.thresholds || base.thresholds,
       blockFiles: src.blockFileUpload ?? base.blockFiles,
-      rules: [...globalThis.PII_RULES, ...(src.customRules || [])].map((r) => ({ ...r, enabled: !disabled.has(r.id) }))
+      rules: [...globalThis.PII_RULES, ...(src.customRules || [])].map((r) => ({
+        ...r, enabled: !disabled.has(r.id), action: toBlock.has(r.id) ? 'block' : (r.action || 'warn')
+      }))
     };
   }
 })();
@@ -624,13 +635,19 @@ globalThis.PII_GENERIC = {
 
 `document.execCommand` は非推奨APIだが、ProseMirror等のリッチエディタの内部状態と整合した書き換えを行う現実的な手段であり、各ブラウザで引き続き動作する。動作しなくなった場合に備え、マスクに失敗したら「マスク済みテキストをクリップボードにコピーし、手動で貼り直してもらう」代替フローを用意する。
 
-### 5.7 ブロックUI（modal.js）の仕様
+### 5.7 確認ポップアップ（modal.js）の仕様
 
 - `attachShadow({ mode: 'closed' })` のShadow DOMに描画し、サイトのCSSの影響とページスクリプトからの参照を防ぐ
+- 送信操作（Enter・送信ボタン）や貼り付けをいったん止めた状態で、画面中央にポップアップとして表示する。背景にオーバーレイを敷き、入力欄の操作を一時的に受け付けない
 - 表示内容：見出し「個人情報が含まれている可能性があります」、検出種別の一覧（例：保険者番号 `06******`）、判定理由（キーワード・検証番号一致）
-- ボタン：ブロック時は「該当箇所をマスクする」「編集に戻る」の2つ。警告時はこれに「このまま送信する」を加え、押下後10秒以内の再送信のみ許可する
+- 重要度は表示で区別する：`warn`（強調）はアイコンと色で強く示し、`notice`（参考）は控えめに一覧へ並べる。いずれも送信可否は同じ
+- ボタン：「該当箇所をマスクする」「編集に戻る」「このまま送信する」の3つ。「このまま送信する」の押下後、同一テキストかつ10秒以内の再送信のみ許可する
+- 貼り付け・ドロップ時は3つ目を「このまま貼り付ける」とする
+- 管理者ポリシーでブロックに指定された種別を検出した場合のみ、「このまま送信する」を表示しない
+- 誤検知で止められた利用者が1クリックで先へ進めることを優先し、既定のフォーカスは「このまま送信する」以外（「編集に戻る」）に置く
 - 検出値は `Detector.preview()` で伏せ字にしてから表示し、完全な値をDOMに書き出さない
-- キーボード操作（Tab移動、Escで閉じる）とフォーカストラップに対応する
+- キーボード操作（Tab移動、Escで「編集に戻る」）とフォーカストラップに対応する
+- ボタンのクリックは `event.isTrusted` を検証し、ページのスクリプトによる合成クリックでは承認できないようにする（6.4）
 
 ### 5.8 Service Worker（background.js）
 
@@ -665,7 +682,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     "customRules":     { "type": "array", "items": { "type": "object",
                           "properties": { "id": {"type":"string"}, "label": {"type":"string"}, "kind": {"type":"string"},
                                            "pattern": {"type":"string"}, "baseScore": {"type":"integer"}, "action": {"type":"string"} } } },
-    "thresholds":      { "type": "object", "properties": { "block": {"type":"integer"}, "warn": {"type":"integer"} } },
+    "thresholds":      { "type": "object", "properties": { "high": {"type":"integer"}, "low": {"type":"integer"} } },
+    "blockRules":      { "type": "array", "items": { "type": "string" },
+                          "description": "ブロック（送信不可）に引き上げる種別のID。既定は空＝すべて警告" },
     "blockFileUpload": { "type": "boolean" },
     "enableNetGuard":  { "type": "boolean" }
   }
@@ -679,8 +698,9 @@ chrome.runtime.onMessage.addListener((msg) => {
 ```js
 // src/net-guard.js — MAIN world。ページの送信本文を最終検査する
 (() => {
+  // 最終防御層のため、警告レベル（既定）でも送信を止める
   const blocked = (body) => typeof body === 'string' &&
-    globalThis.Detector.detect(body).some((f) => f.level === 'block');
+    globalThis.Detector.detect(body).some((f) => f.level === 'block' || f.level === 'warn');
   const notify = () => window.postMessage({ source: 'pii-guard', type: 'net-blocked' }, location.origin);
 
   const origFetch = window.fetch;
@@ -763,7 +783,7 @@ process.exit(ng ? 1 : 0);
 ### 6.4 ページからの改ざん対策
 
 - 検出ロジックはISOLATED worldで動作させ、ページのスクリプトから関数や設定を書き換えられないようにする
-- モーダルは closed な Shadow DOM とし、ページ側から「このまま送信」ボタンを押させる操作を防ぐ（ボタンのクリックは `event.isTrusted` を確認する）
+- 確認ポップアップは closed な Shadow DOM とし、ページ側から「このまま送信する」ボタンを押させる操作を防ぐ（ボタンのクリックは `event.isTrusted` を確認する）。既定の判定が警告のみで、すべての検出にこのボタンが表示される以上、この2点は必須要件とする
 - MAIN worldの通信ラッパはページから上書き可能なため、あくまで補助層と位置づけ、主防御はISOLATED worldのイベント捕捉とする
 - `window.postMessage` の受信時は `event.source === window`・`event.origin` と `source: 'pii-guard'` を確認し、通知表示以外の処理は行わない
 
@@ -780,27 +800,27 @@ process.exit(ng ? 1 : 0);
 | 段階 | 手段 | 合格基準 |
 | --- | --- | --- |
 | 単体 | Node.js ＋ Vitest（または Jest）で `detector.js` を検査 | テストベクタ全件で期待どおりの判定 |
-| 結合 | Playwright で拡張機能を読み込んだChromiumを起動し、ローカルのテスト用HTML（textarea版・ProseMirror版）で送信を試行 | ブロック時に送信ハンドラが呼ばれないこと |
+| 結合 | Playwright で拡張機能を読み込んだChromiumを起動し、ローカルのテスト用HTML（textarea版・ProseMirror版）で送信を試行 | 検出時、承認するまで送信ハンドラが呼ばれないこと。承認後は呼ばれること |
 | サイト別 | 対象AIサイトごとの手動チェックリスト（7.3） | 全項目OK |
-| 評価 | 業務文書風の評価コーパスで誤検知率・見逃し率を測定 | 見逃し率0%（ブロック対象種別）、誤検知率5%以下（目標値、要合意） |
+| 評価 | 業務文書風の評価コーパスで誤検知率・見逃し率を測定 | 見逃し率0%（強調警告の対象種別）、誤検知率5%以下（目標値、要合意） |
 | 通信 | DevTools Network パネル、`chrome://net-export` | 拡張機能起点の通信0件 |
 
 ### 7.2 単体テストベクタ（例）
 
 | 入力 | 期待結果 | 観点 |
 | --- | --- | --- |
-| `保険者番号 06130017` | ブロック（保険者番号） | 検証番号一致＋強キーワード |
+| `保険者番号 06130017` | 警告（強調・保険者番号） | 検証番号一致＋強キーワード |
 | `保険者番号 06130018` | 通過 | 検証番号不一致 |
-| `０６１３００１７　保険証` | ブロック | 全角数字・全角空白の正規化 |
-| `0613-0017 保険者番号` | ブロック | 区切り文字を挟んだ数字列 |
-| `注文番号 06130017` | 警告以下 | 否定キーワードによる減点 |
-| `06130017`（キーワードなし） | 警告 | `requireKeywordForBlock` による上限 |
-| `記号 12-34 番号 567` | ブロック（被保険者記号・番号） | 可変長・キーワード型 |
-| `被保険者番号：00012345` | ブロック | キーワード型 |
-| `マイナンバーは123456789018です` | ブロック（マイナンバー） | 検査用数字一致 |
+| `０６１３００１７　保険証` | 警告（強調） | 全角数字・全角空白の正規化 |
+| `0613-0017 保険者番号` | 警告（強調） | 区切り文字を挟んだ数字列 |
+| `注文番号 06130017` | 警告（参考）以下 | 否定キーワードによる減点 |
+| `06130017`（キーワードなし） | 警告（参考） | `requireKeywordForHigh` による上限 |
+| `記号 12-34 番号 567` | 警告（強調・被保険者記号・番号） | 可変長・キーワード型 |
+| `被保険者番号：00012345` | 警告（強調） | キーワード型 |
+| `マイナンバーは123456789018です` | 警告（強調・マイナンバー） | 検査用数字一致 |
 | `123456789019` | 通過 | 検査用数字不一致 |
-| `4111 1111 1111 1111` | ブロック（クレジットカード） | Luhn・区切り |
-| `基礎年金番号 1234-567890` | ブロック | キーワード必須型 |
+| `4111 1111 1111 1111` | 警告（強調・クレジットカード） | Luhn・区切り |
+| `基礎年金番号 1234-567890` | 警告（強調） | キーワード必須型 |
 | `1234567890`（キーワードなし） | 通過 | キーワード必須型の見送り |
 | `データーを整理` | 通過 | 長音「ー」をハイフン扱いしない |
 | 1万文字のランダム日本語＋数字 | 50ms以内 | 性能 |
@@ -819,8 +839,8 @@ beforeAll(async () => {
 const levels = (t) => globalThis.Detector.detect(t).map((f) => [f.ruleId, f.level]);
 
 describe('保険者番号', () => {
-  it('検証番号一致＋キーワードでブロック', () => {
-    expect(levels('保険者番号 06130017')).toContainEqual(['insurer_number', 'block']);
+  it('検証番号一致＋キーワードで強調警告', () => {
+    expect(levels('保険者番号 06130017')).toContainEqual(['insurer_number', 'warn']);
   });
   it('検証番号不一致は検出しない', () => {
     expect(levels('保険者番号 06130018').some(([id]) => id === 'insurer_number')).toBe(false);
@@ -847,15 +867,17 @@ describe('マスク', () => {
 
 対象サイトごと・リリースごとに以下を確認する。
 
-- [ ] 入力欄への直接入力後、Enterで送信 → ブロックされる
-- [ ] 送信ボタンのクリックで送信 → ブロックされる
-- [ ] 日本語IME変換確定のEnterで誤ってブロック判定・送信が起きない
+- [ ] 入力欄への直接入力後、Enterで送信 → 確認ポップアップが出て、承認するまで送信されない
+- [ ] 送信ボタンのクリックで送信 → 確認ポップアップが出て、承認するまで送信されない
+- [ ] 「このまま送信する」で実際に送信され、サイト側の動作が壊れない
+- [ ] 日本語IME変換確定のEnterで誤ってポップアップ表示・送信が起きない
 - [ ] Shift+Enter の改行が妨げられない
 - [ ] 個人情報を含むテキストの貼り付け → 入力欄に入る前に止まる
 - [ ] テキストのドラッグ＆ドロップ → 止まる
 - [ ] ファイル添付（貼り付け・ドロップ・添付ボタン） → 設定どおりに禁止または検査される
 - [ ] 「マスクする」で入力欄が書き換わり、サイト側の送信内容にも反映される
-- [ ] 警告で「このまま送信」後、10秒以内の同一テキストのみ送信できる
+- [ ] 「このまま送信する」後、10秒以内の同一テキストのみ送信できる（テキストを編集すると再検査される）
+- [ ] 検出エンジンが例外を投げた場合、エラーポップアップが出て「このまま送信する」で続行できる（fail-closed）
 - [ ] 会話の編集（過去メッセージの編集・再送信）でも検査される
 - [ ] 新しい会話・画面遷移後も検査が効く（SPA遷移）
 - [ ] 検出なしの通常利用で操作が妨げられない
@@ -911,7 +933,9 @@ describe('マスク', () => {
 | 別ブラウザ、スマホ、デスクトップアプリ、API | 対象外 | ブラウザ・アプリの利用制限、ネットワーク側のURL制御 |
 | サイトの画面改修 | 一時的に捕捉漏れ | 汎用セレクタ、通信ラッパ、定期チェック |
 | 氏名・住所・病名単独 | 番号ほど確実に判定できず警告止まり | 辞書の拡充、利用規程 |
-| 利用者が警告を承認して送信 | 送信される | 件数ログでの傾向把握、警告の対象を必要最小限にする |
+| 利用者が警告を承認して送信 | 送信される（既定ではすべての種別が該当する） | 件数ログでの傾向把握、警告の対象を必要最小限にする、判定理由の具体的な提示、誤検知率が十分低いと確認できた種別のポリシーによるブロック昇格 |
+
+既定の判定を警告のみとしたのは、誤検知の代償を「1クリック」に抑え、利用者が別ブラウザ等へ回避することを防ぐためである。強制力より、使われ続けることを優先している。
 
 本拡張は「うっかり入力」を止めるための仕組みであり、意図的な持ち出しの防止には、ネットワーク側のDLP・CASB、端末管理、規程と教育を組み合わせる。
 
