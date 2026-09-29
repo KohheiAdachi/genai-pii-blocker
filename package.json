@@ -1,0 +1,19 @@
+{
+  "name": "pii-guard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "生成AIチャットへの個人情報の送信を端末内で検出し、送信前に確認するブラウザ拡張機能（外部通信なし）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "check:no-network": "node scripts/check-no-network.mjs",
+    "check": "npm run check:no-network && npm test"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.2"
+  }
+}
