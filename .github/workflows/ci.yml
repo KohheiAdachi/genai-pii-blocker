@@ -21,8 +21,6 @@ jobs:
       - name: 単体テスト
         run: npm test
 
-      # TODO(#9): 外部通信ゼロのビルドチェックを追加する。
-      # scripts/check-no-network.mjs が未実装のため、まだ有効化していない。
-      # ADR-0002 の「ビルド層」はこのステップが入って初めて成立する。
-      # - name: 外部通信ゼロのチェック
-      #   run: npm run check:no-network
+      # ADR-0002 の4層のうち「ビルド層」。ADR-0008 の console 出力禁止もここで検査する。
+      - name: 外部通信ゼロのチェック
+        run: npm run check:no-network
