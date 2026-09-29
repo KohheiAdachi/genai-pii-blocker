@@ -124,6 +124,43 @@ describe('伏せ字（preview）', () => {
   });
 });
 
+describe('判定理由（ADR-0013：なぜ止めたかを示す）', () => {
+  const reasons = (text) => Detector.detect(text)[0].reasons;
+
+  it('形式一致・検証番号一致・強キーワードを挙げる', () => {
+    expect(reasons('保険者番号 06130017')).toEqual([
+      '8桁の数字という形式が一致',
+      '検証番号（チェックディジット）が一致',
+      '近くに「保険者番号」というキーワードがある'
+    ]);
+  });
+
+  it('否定キーワードで減点したことを示す', () => {
+    const r = reasons('注文番号 06130017');
+    expect(r).toContain('「注文番号」があるため減点した');
+    expect(r).toContain('確実なキーワードがないため、参考表示に留めた');
+  });
+
+  it('弱いキーワードしかない場合はそう書く', () => {
+    expect(reasons('番号 06130017')).toContain('近くに「番号」という語がある（弱い一致）');
+  });
+
+  it('キーワードがなければ上限に留めた理由だけが付く', () => {
+    const r = reasons('06130017');
+    expect(r).toEqual([
+      '8桁の数字という形式が一致',
+      '検証番号（チェックディジット）が一致',
+      '確実なキーワードがないため、参考表示に留めた'
+    ]);
+  });
+
+  it('検出値そのものは理由に含まれない', () => {
+    for (const r of reasons('保険者番号 06130017')) {
+      expect(r).not.toContain('06130017');
+    }
+  });
+});
+
 describe('判定レベル', () => {
   it('管理者ポリシーで action が block のルールは block になる', () => {
     const rules = [{ ...globalThis.PII_RULES[0], action: 'block' }];

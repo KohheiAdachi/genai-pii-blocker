@@ -85,18 +85,36 @@ globalThis.Detector = (() => {
 
   const VALIDATORS = { luhn, myNumber };
 
+  // 候補の前後を辞書と照合する。一致した語も返す（判定理由の提示に使う。ADR-0013）
   function keywordScore(text, start, end, kw = {}) {
     const ctx = text.slice(
       Math.max(0, start - CONTEXT_CHARS),
       Math.min(text.length, end + CONTEXT_CHARS)
     );
-    const has = (list) => (list || []).some((k) => ctx.includes(k));
-    const strong = has(kw.strong);
+    const find = (list) => (list || []).find((k) => ctx.includes(k));
+    const strongHit = find(kw.strong);
+    const weakHit = find(kw.weak);
+    const negativeHit = find(kw.negative);
     let s = 0;
-    if (strong) s += SCORE.strong;
-    if (has(kw.weak)) s += SCORE.weak;
-    if (has(kw.negative)) s += SCORE.negative;
-    return { score: s, strong };
+    if (strongHit) s += SCORE.strong;
+    if (weakHit) s += SCORE.weak;
+    if (negativeHit) s += SCORE.negative;
+    return { score: s, strong: Boolean(strongHit), strongHit, weakHit, negativeHit };
+  }
+
+  // 判定理由の文。利用者が承認するかどうかを判断する材料になるため、
+  // スコアの内訳ではなく「何が一致したのか」を書く（ADR-0013）。
+  // 辞書に載せた語そのものは検出値ではないので、そのまま表示してよい。
+  function reasonsOf({ formatLabel, validated, kw, cappedByKeyword }) {
+    const reasons = [formatLabel];
+    if (validated) reasons.push('検証番号（チェックディジット）が一致');
+    if (kw.strongHit) reasons.push(`近くに「${kw.strongHit}」というキーワードがある`);
+    else if (kw.weakHit) reasons.push(`近くに「${kw.weakHit}」という語がある（弱い一致）`);
+    if (kw.negativeHit) reasons.push(`「${kw.negativeHit}」があるため減点した`);
+    if (cappedByKeyword) {
+      reasons.push('確実なキーワードがないため、参考表示に留めた');
+    }
+    return reasons;
   }
 
   function detect(src, settings = {}) {
@@ -107,7 +125,7 @@ globalThis.Detector = (() => {
     const { text, map } = normalizeWithMap(src);
     const findings = [];
 
-    const push = (rule, start, end, score) => {
+    const push = (rule, start, end, score, reasons) => {
       // 既定では rule.action === 'warn'。'block' は管理者ポリシーで
       // blockRules に指定された種別にのみ入る（ADR-0013）
       let level = 'pass';
@@ -119,6 +137,7 @@ globalThis.Detector = (() => {
         label: rule.label,
         level,
         score,
+        reasons, // 確認ポップアップで「なぜ止めたか」を示すため（ADR-0013）
         start: map[start], // 元テキスト上の位置
         end: map[end]
       });
@@ -146,10 +165,17 @@ globalThis.Detector = (() => {
           if (rule.requireKeyword && !kw.strong) continue;
           score += kw.score;
           // 偶然チェックディジットを通る数字列を強調表示しないための上限
-          if (rule.requireKeywordForHigh && !kw.strong) {
+          const cappedByKeyword = Boolean(rule.requireKeywordForHigh && !kw.strong);
+          if (cappedByKeyword) {
             score = Math.min(score, thresholds.high - 1);
           }
-          push(rule, start, end, score);
+          const reasons = reasonsOf({
+            formatLabel: `${digits.length}桁の数字という形式が一致`,
+            validated: Boolean(rule.validator),
+            kw,
+            cappedByKeyword
+          });
+          push(rule, start, end, score, reasons);
         }
       }
     }
@@ -167,7 +193,13 @@ globalThis.Detector = (() => {
         const end = m.index + m[0].length;
         const kw = keywordScore(text, start, end, rule.keywords);
         if (rule.requireKeyword && !kw.strong) continue;
-        push(rule, start, end, (rule.baseScore ?? SCORE.format) + kw.score);
+        const reasons = reasonsOf({
+          formatLabel: `${rule.label}の記載パターンに一致`,
+          validated: false,
+          kw,
+          cappedByKeyword: false
+        });
+        push(rule, start, end, (rule.baseScore ?? SCORE.format) + kw.score, reasons);
       }
     }
 
@@ -212,6 +244,6 @@ globalThis.Detector = (() => {
     detect,
     mask,
     preview,
-    _internal: { luhn, myNumber, normalizeWithMap, keywordScore, dedupe }
+    _internal: { luhn, myNumber, normalizeWithMap, keywordScore, reasonsOf, dedupe }
   };
 })();
