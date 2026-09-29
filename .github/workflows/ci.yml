@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 単体テスト
+        run: npm test
+
+      # TODO(#9): 外部通信ゼロのビルドチェックを追加する。
+      # scripts/check-no-network.mjs が未実装のため、まだ有効化していない。
+      # ADR-0002 の「ビルド層」はこのステップが入って初めて成立する。
+      # - name: 外部通信ゼロのチェック
+      #   run: npm run check:no-network
