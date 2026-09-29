@@ -49,7 +49,12 @@ docs/       設計ドキュメント
 
 `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` / `navigator.sendBeacon` / `import()` を使わない。`src/net-guard.js` だけは例外（ラップ対象として参照するため。個別レビュー必須）。
 
-`npm run check:no-network` で機械的に検査する。**このスクリプトは未実装（[#9](../../issues/9)）** のため、現在は実行すると失敗する。CIのステップもコメントアウトしてある。
+`npm run check:no-network`（`scripts/check-no-network.mjs`）で機械的に検査する。CIでも PR と `main` への push で実行し、違反があればビルドを落とす。
+
+- 検出対象：`fetch(` / `new XMLHttpRequest` / `new WebSocket` / `EventSource` / `sendBeacon` / `import(` / `http://`・`https://`、**および `console.`**（下記「検出値を保存・出力しない」。ADR-0008 の「デバッグ出力をビルドで除去する」を、除去スクリプトではなくコード規約＋この機械検出で満たしている）
+- 検査対象：`src/` と `options/` の `.js` / `.html` のみ。`manifest.json` は `host_permissions` や `matches` にURLを含むため対象外
+- 許可リスト：`src/net-guard.js` のみ。通信APIの参照だけを許可し、`console.` は許可しない
+- 違反はファイル名・行番号・該当パターンで報告される
 
 ### 同梱コードの依存ライブラリはゼロ
 
