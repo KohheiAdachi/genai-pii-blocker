@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PiiModal 目視確認ページ</title>
+<!--
+  src/modal.js の目視確認用ページ。ブラウザでこのファイルを直接開く。
+
+  Shadow DOM の自動テストには jsdom / happy-dom が必要になるが、同梱コードの依存ゼロ・
+  devDependency も最小限という方針（ADR-0002）のため、単体テストを足す代わりに目視で
+  確認できる手段を用意している。console への出力は ADR-0008 で禁止しているため、
+  結果はこのページ上に表示する。
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto;
+    padding: 24px 20px 64px;
+    max-width: 880px;
+    font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.7;
+  }
+  h1 { font-size: 20px; }
+  h2 { font-size: 15px; margin-top: 28px; }
+  p, li { font-size: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+  button {
+    padding: 8px 14px;
+    border: 1px solid #999;
+    border-radius: 6px;
+    background: Canvas;
+    color: CanvasText;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre {
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(127, 127, 127, 0.14);
+    font-size: 12.5px;
+    overflow-x: auto;
+  }
+  #log {
+    margin-top: 10px;
+    padding: 10px 12px;
+    min-height: 3.2em;
+    border: 1px solid rgba(127, 127, 127, 0.5);
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .hint { font-size: 13px; opacity: 0.85; }
+  /* モーダルが外側のCSSに影響されないことの確認用。乱暴な指定をわざと置いている */
+  .css-attack * {
+    font-family: "Comic Sans MS", cursive !important;
+    color: #ff00ff !important;
+    text-transform: uppercase !important;
+    letter-spacing: 3px !important;
+  }
+</style>
+</head>
+<body>
+<h1>PiiModal 目視確認ページ</h1>
+<p class="hint">
+  <code>src/modal.js</code> を読み込み、偽の <code>findings</code> で <code>PiiModal.show()</code> を呼ぶ。
+  ボタンを押したあとの操作結果（マスク／続行／閉じる）は下の「操作ログ」に出る。
+</p>
+
+<h2>検査対象のテキスト（<code>findings</code> の start / end はこの文字列上の位置）</h2>
+<pre id="sample"></pre>
+
+<h2>1. 確認ポップアップ</h2>
+<div class="row">
+  <button data-case="warn">warn のみ</button>
+  <button data-case="notice">notice のみ</button>
+  <button data-case="both">warn + notice</button>
+  <button data-case="many">検出多数（表示上限の確認）</button>
+  <button data-case="blocked">canProceed: false（続行ボタンなし）</button>
+  <button data-case="paste">mode: 'paste'（このまま貼り付ける）</button>
+</div>
+
+<h2>2. そのほかのポップアップ</h2>
+<div class="row">
+  <button data-case="error">showError（検査失敗・fail-closed）</button>
+  <button data-case="file">showFileBlocked（ファイル添付のブロック）</button>
+</div>
+
+<h2>3. Detector 不在時のフォールバック</h2>
+<p class="hint">
+  <code>globalThis.Detector.preview()</code> がある場合は <code>06******</code> のように先頭2桁だけ残る。
+  Detector が無い場合は全桁が <code>*</code> になる（値をそのまま表示しない）。
+</p>
+<div class="row">
+  <button data-case="detector-off">Detector を外して warn を表示（全桁 *）</button>
+  <button data-case="detector-on">Detector を戻して warn を表示（先頭2桁のみ）</button>
+  <button data-case="detector-throw">Detector.preview が例外を投げる場合</button>
+</div>
+
+<h2>4. 改ざん耐性・隔離の確認</h2>
+<div class="row">
+  <button data-case="probe-shadow">ページから shadowRoot を辿れるか調べる</button>
+  <button data-case="probe-click">合成クリックで「このまま送信する」を押せるか試す</button>
+  <button data-case="css-attack">外側の乱暴なCSSの影響を受けないか確認する</button>
+</div>
+<p class="hint">
+  期待する結果: <code>shadowRoot</code> は <code>null</code>、合成クリック（<code>element.click()</code> /
+  <code>dispatchEvent</code>）では承認されない（操作ログに「続行」が出ない）、モーダルの見た目は変わらない。
+</p>
+
+<h2>5. キーボード操作</h2>
+<ul class="hint">
+  <li>表示直後のフォーカスは「編集に戻る」にあること（誤承認の防止）</li>
+  <li>Tab / Shift+Tab でポップアップ内のボタンだけを循環すること（外へ出ないこと）</li>
+  <li>Esc で「編集に戻る」と同じように閉じること</li>
+  <li>フォーカスした状態の Enter / Space では押せること（本物のクリックとして扱われる）</li>
+</ul>
+
+<h2>操作ログ</h2>
+<div id="log">（まだ操作していない）</div>
+
+<script src="../../src/modal.js"></script>
+<script>
+(() => {
+  const SAMPLE =
+    '保険者番号 06130017 の患者について。\n' +
+    '個人番号は 123456789018 です。\n' +
+    'カード番号 4111 1111 1111 1111 も控えてあります。\n' +
+    '参考の番号 12345678 もメモしておきます。';
+  document.getElementById('sample').textContent = SAMPLE;
+
+  const logEl = document.getElementById('log');
+  const lines = [];
+  const log = (msg) => {
+    lines.unshift(new Date().toLocaleTimeString('ja-JP') + '  ' + msg);
+    logEl.textContent = lines.slice(0, 12).join('\n');
+  };
+
+  // 本物の Detector.preview（src/detector.js と同じ仕様。#3 の実装を待たずに確認できるようにする）
+  const realPreview = (value) =>
+    value.length <= 4 ? '*'.repeat(value.length) : value.slice(0, 2) + '*'.repeat(value.length - 2);
+  const installDetector = (impl) => { globalThis.Detector = impl ? { preview: impl } : undefined; };
+  installDetector(realPreview);
+
+  const at = (needle) => {
+    const start = SAMPLE.indexOf(needle);
+    return { start, end: start + needle.length };
+  };
+  const f = (ruleId, label, level, score, needle) => ({ ruleId, label, level, score, ...at(needle) });
+
+  const HOKENSHA = f('hokensha', '保険者番号', 'warn', 110, '06130017');
+  const MYNUMBER = f('mynumber', 'マイナンバー', 'warn', 110, '123456789018');
+  const CARD = f('card', 'クレジットカード番号', 'warn', 70, '4111 1111 1111 1111');
+  const NOTICE = f('hokensha', '保険者番号', 'notice', 45, '12345678');
+
+  const CASES = {
+    warn: { findings: [HOKENSHA, MYNUMBER] },
+    notice: { findings: [NOTICE] },
+    both: { findings: [HOKENSHA, CARD, NOTICE] },
+    blocked: { findings: [{ ...MYNUMBER, level: 'block' }, NOTICE], canProceed: false },
+    paste: { mode: 'paste', findings: [HOKENSHA, NOTICE] }
+  };
+  // 表示上限（12件）を超える例。位置は使い回すが、ラベルで区別できるようにしておく
+  CASES.many = {
+    findings: Array.from({ length: 15 }, (_, i) => ({
+      ...(i % 3 === 0 ? NOTICE : HOKENSHA),
+      ruleId: 'dummy' + i,
+      label: (i % 3 === 0 ? '参考の種別' : '警告の種別') + (i + 1)
+    }))
+  };
+
+  function show(caseName, overrides) {
+    const base = CASES[caseName] || CASES.warn;
+    const opts = {
+      mode: 'send',
+      text: SAMPLE,
+      canProceed: true,
+      ...base,
+      ...(overrides || {}),
+      onMask: () => log('onMask が呼ばれた（該当箇所をマスクする）'),
+      onProceed: () => log('onProceed が呼ばれた（続行）')
+    };
+    globalThis.PiiModal.show(opts);
+    log(`show({ mode: '${opts.mode}', findings: ${opts.findings.length}件, canProceed: ${opts.canProceed} }）`);
+  }
+
+  // ページ側から見えるホスト要素を拾う（closed Shadow DOM なら中身は辿れないはず）
+  const findHost = () => [...document.body.children].find((n) => n.tagName.toLowerCase().startsWith('pii-guard-'));
+
+  const ACTIONS = {
+    warn: () => show('warn'),
+    notice: () => show('notice'),
+    both: () => show('both'),
+    many: () => show('many'),
+    blocked: () => show('blocked'),
+    paste: () => show('paste'),
+
+    error: () => {
+      globalThis.PiiModal.showError({ onProceed: () => log('showError の onProceed が呼ばれた（続行）') });
+      log('showError() を呼んだ');
+    },
+    file: () => {
+      globalThis.PiiModal.showFileBlocked();
+      log('showFileBlocked() を呼んだ');
+    },
+
+    'detector-off': () => {
+      installDetector(null);
+      show('warn');
+      log('Detector を外した状態で表示（伏せ字は全桁 * になるはず）');
+    },
+    'detector-on': () => {
+      installDetector(realPreview);
+      show('warn');
+      log('Detector を戻して表示（06****** のように先頭2桁だけ残るはず）');
+    },
+    'detector-throw': () => {
+      installDetector(() => { throw new Error('preview が壊れている場合'); });
+      show('warn');
+      log('Detector.preview が例外を投げる状態で表示（全桁 * にフォールバックするはず）');
+      installDetector(realPreview);
+    },
+
+    'probe-shadow': () => {
+      show('warn');
+      const host = findHost();
+      if (!host) { log('NG: ホスト要素が見つからない'); return; }
+      const viaProp = host.shadowRoot;
+      let viaQuery = null;
+      try { viaQuery = host.querySelector('button'); } catch (_) { viaQuery = null; }
+      log(
+        `host.shadowRoot = ${String(viaProp)} / host.querySelector('button') = ${String(viaQuery)}` +
+        `（両方 null なら期待どおり。内部のボタンはページから辿れない）`
+      );
+    },
+
+    'probe-click': () => {
+      show('warn');
+      const host = findHost();
+      if (!host) { log('NG: ホスト要素が見つからない'); return; }
+      // shadowRoot が辿れないので、ホスト要素に合成クリックを投げてみる。
+      // 仮に内部のボタンを取得できたとしても isTrusted === false で拒否される。
+      host.click();
+      host.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+      const inner = host.shadowRoot && host.shadowRoot.querySelector('.btn-danger');
+      if (inner) { inner.click(); log('NG: shadowRoot 経由で内部のボタンを取得できてしまった'); }
+      log('合成クリックを投げた。操作ログに「続行」が出ていなければ期待どおり（isTrusted の検証が効いている）');
+    },
+
+    'css-attack': () => {
+      document.body.classList.add('css-attack');
+      show('both');
+      log('外側に色・フォント・大文字化の !important を当てた。モーダルの見た目が変わらなければ期待どおり');
+    }
+  };
+
+  for (const btn of document.querySelectorAll('button[data-case]')) {
+    btn.addEventListener('click', () => ACTIONS[btn.dataset.case]());
+  }
+})();
+</script>
+</body>
+</html>
