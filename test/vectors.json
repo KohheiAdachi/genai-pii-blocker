@@ -1,0 +1,95 @@
+[
+  {
+    "input": "保険者番号 06130017",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "検証番号一致＋強キーワード"
+  },
+  {
+    "input": "保険者番号 06130018",
+    "expect": [],
+    "note": "検証番号不一致（1桁変えたもの）"
+  },
+  {
+    "input": "０６１３００１７　保険証",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "全角数字・全角空白の正規化"
+  },
+  {
+    "input": "0613-0017 保険者番号",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "区切り文字を挟んだ数字列"
+  },
+  {
+    "input": "0613 0017 保険者番号",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "空白を挟んだ数字列"
+  },
+  {
+    "input": "保険者番号０６１３−００１７",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "全角数字＋全角マイナスの正規化"
+  },
+  {
+    "input": "注文番号 06130017",
+    "expect": [{ "ruleId": "insurer_number", "level": "notice" }],
+    "note": "否定キーワードによる減点。強キーワードがないので強調にはならない"
+  },
+  {
+    "input": "06130017",
+    "expect": [{ "ruleId": "insurer_number", "level": "notice" }],
+    "note": "キーワードなし。requireKeywordForHigh による上限で参考表示に留まる"
+  },
+  {
+    "input": "保険者番号 131235",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "国民健康保険の6桁"
+  },
+  {
+    "input": "後期高齢者医療の保険者番号は39130018です",
+    "expect": [{ "ruleId": "insurer_number", "level": "warn" }],
+    "note": "法別番号39は後期高齢者医療の保険者番号。8桁＋検証番号なので同じルールで捕捉できる"
+  },
+  {
+    "input": "マイナンバーは123456789018です",
+    "expect": [{ "ruleId": "my_number", "level": "warn" }],
+    "note": "検査用数字一致"
+  },
+  {
+    "input": "個人番号 1234-5678-9018",
+    "expect": [{ "ruleId": "my_number", "level": "warn" }],
+    "note": "区切り付きのマイナンバー"
+  },
+  {
+    "input": "123456789019",
+    "expect": [],
+    "note": "検査用数字不一致"
+  },
+  {
+    "input": "マイナンバー 123456789019",
+    "expect": [],
+    "note": "強キーワードがあっても検査用数字が合わなければ検出しない"
+  },
+  {
+    "input": "データーを整理しました",
+    "expect": [],
+    "note": "長音「ー」をハイフン扱いしない"
+  },
+  {
+    "input": "郵便番号 1234567 に送付",
+    "expect": [],
+    "note": "7桁はどのルールの桁数にも一致しない"
+  },
+  {
+    "input": "本日の議事録です。特に決定事項はありません。",
+    "expect": [],
+    "note": "数字を含まない通常の文章"
+  },
+  {
+    "input": "保険者番号 06130017 とマイナンバー 123456789018 を記載",
+    "expect": [
+      { "ruleId": "insurer_number", "level": "warn" },
+      { "ruleId": "my_number", "level": "warn" }
+    ],
+    "note": "複数種別の同時検出。位置の昇順で返る"
+  }
+]
