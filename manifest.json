@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "AI入力 個人情報ガード",
+  "version": "0.1.0",
+  "description": "生成AIチャットへの個人情報の送信を端末内で検出し、送信前に確認します（外部通信なし）",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": [
+        "src/rules.js",
+        "src/detector.js",
+        "src/sites.js",
+        "src/modal.js",
+        "src/content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": { "default_title": "AI入力 個人情報ガード" },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"
+  }
+}
